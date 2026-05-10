@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import os
 from pathlib import Path
 
 import streamlit as st
@@ -9,6 +10,7 @@ APP_DIR = Path(__file__).resolve().parent
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
+from src.discord_client import DiscordWebhookError, send_discord_chunks, validate_discord_webhook_url
 from src.github_releases import ReleaseFetchError, fetch_latest_release
 from src.storage import load_history, save_batch
 from src.update_formatter import (
@@ -19,6 +21,8 @@ from src.update_formatter import (
     split_for_discord,
 )
 
+PROJECT_ROOT = APP_DIR.parent
+
 
 st.set_page_config(
     page_title="Media Update Broadcaster",
@@ -26,6 +30,27 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+
+def load_dotenv() -> None:
+    env_path = PROJECT_ROOT / ".env"
+    if not env_path.exists():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        cleaned = line.strip()
+        if not cleaned or cleaned.startswith("#") or "=" not in cleaned:
+            continue
+        key, value = cleaned.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+def configured_webhook_url() -> str:
+    secret_value = ""
+    try:
+        secret_value = str(st.secrets.get("DISCORD_WEBHOOK_URL", ""))
+    except Exception:
+        secret_value = ""
+    return os.environ.get("DISCORD_WEBHOOK_URL", "").strip() or secret_value.strip()
 
 
 def init_state() -> None:
@@ -52,6 +77,7 @@ def render_update_card(update: UpdateItem, index: int) -> None:
 
 
 def main() -> None:
+    load_dotenv()
     init_state()
 
     st.title("Media Update Broadcaster")
@@ -161,6 +187,32 @@ def main() -> None:
                 height=360,
                 key=f"discord-chunk-{idx}",
             )
+        st.divider()
+        st.markdown("**Send to Discord**")
+        webhook_default = configured_webhook_url()
+        webhook_url = st.text_input(
+            "Webhook URL",
+            value=webhook_default,
+            type="password",
+            help="Use DISCORD_WEBHOOK_URL in .env or Streamlit secrets to avoid pasting this every time.",
+        )
+        dry_run = st.checkbox("Dry run only", value=True)
+        col_send, col_validate = st.columns(2)
+        with col_validate:
+            if st.button("Validate webhook", disabled=not webhook_url):
+                try:
+                    validate_discord_webhook_url(webhook_url)
+                    st.success("Webhook format looks valid.")
+                except DiscordWebhookError as exc:
+                    st.error(str(exc))
+        with col_send:
+            if st.button("Send current batch", type="primary", disabled=not st.session_state.updates):
+                try:
+                    result = send_discord_chunks(webhook_url, chunks, dry_run=dry_run)
+                    mode = "validated in dry-run mode" if result.dry_run else "sent"
+                    st.success(f"{result.sent} Discord chunk(s) {mode}.")
+                except DiscordWebhookError as exc:
+                    st.error(str(exc))
         if st.button("Save this batch to history", disabled=not st.session_state.updates):
             save_batch(st.session_state.updates, message)
             st.success("Saved to local history.")

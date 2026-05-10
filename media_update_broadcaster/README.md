@@ -40,6 +40,10 @@ http://localhost:8502
 3. Review **Discord Output** and paste the generated chunk into the family Discord.
 4. Save useful posts to **History** for local reference.
 
+## Direct Discord Send
+
+Set `DISCORD_WEBHOOK_URL` in the repo root `.env`, Streamlit secrets, or paste it into the UI. Direct sending validates the webhook format, splits long messages, retries rate-limited posts, and starts in dry-run mode.
+
 ## Data
 
 Saved batches are stored locally:
